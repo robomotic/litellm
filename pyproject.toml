@@ -76,6 +76,7 @@ proxy = [
     "websockets",
     "boto3",
     "mcp",
+    "nova-hunting",
     "litellm-proxy-extras"
 ]
 
