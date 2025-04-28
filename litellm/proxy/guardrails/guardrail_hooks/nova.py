@@ -45,6 +45,8 @@ from typing import Dict, Any, Optional, List, Tuple
 import colorama
 from colorama import Fore, Style, Back
 
+GUARDRAIL_NAME = "nova"
+
 # Import Nova components
 try:
     from nova.core.parser import NovaParser
@@ -63,7 +65,7 @@ except ImportError:
     verbose_proxy_logger.error("Error: Nova package not found in PYTHONPATH.")
     verbose_proxy_logger.error("Make sure Nova is installed or set your PYTHONPATH correctly.")
 
-def load_rule_file(file_path: str) -> str:
+def load_rule_file(file_path: str) -> Optional[str]:
     """
     Load a Nova rule from a file.
     
@@ -80,11 +82,11 @@ def load_rule_file(file_path: str) -> str:
         with open(file_path, 'r') as f:
             return f.read()
     except FileNotFoundError:
-        print(f"{Fore.RED}Error: Rule file not found: {file_path}")
-        sys.exit(1)
+        verbose_proxy_logger.error(f"Error: Rule file not found: {file_path}")
+        return None
     except Exception as e:
-        print(f"{Fore.RED}Error loading rule file: {e}")
-        sys.exit(1)
+        verbose_proxy_logger.error(f"Error loading rule file: {e}")
+        return None
 
 
 def load_prompts_file(file_path: str) -> List[str]:
@@ -107,11 +109,11 @@ def load_prompts_file(file_path: str) -> List[str]:
             prompts = [p for p in prompts if p and not p.startswith('#')]
             return prompts
     except FileNotFoundError:
-        print(f"{Fore.RED}Error: Prompts file not found: {file_path}")
-        sys.exit(1)
+        verbose_proxy_logger.error(f"Error: Prompts file not found: {file_path}")
+        return []
     except Exception as e:
-        print(f"{Fore.RED}Error loading prompts file: {e}")
-        sys.exit(1)
+        verbose_proxy_logger.error(f"Error loading prompts file: {e}")
+        return []
 
 
 def extract_rules(content: str) -> List[str]:
@@ -251,8 +253,9 @@ def process_prompt(rule_text: str, prompt: str, verbose: bool = False,
     try:
         rule = parser.parse(rule_text)
     except Exception as e:
-        print(f"{Fore.RED}Error parsing rule: {e}")
-        sys.exit(1)
+        verbose_proxy_logger.error(f"Error parsing rule: {e}")
+        pass
+        return None
     
     # Check if this rule needs LLM evaluation
     needs_llm = check_if_rule_needs_llm(rule)
@@ -261,8 +264,9 @@ def process_prompt(rule_text: str, prompt: str, verbose: bool = False,
     if needs_llm and not llm_evaluator:
         llm_evaluator = get_validated_evaluator(llm_type, model, verbose)
         if llm_evaluator is None:
-            print(f"{Fore.RED}Error: Failed to create LLM evaluator but rule requires it.")
-            sys.exit(1)
+            verbose_proxy_logger.error(f"Error: Failed to create LLM evaluator but rule requires it.")
+            pass
+            return None
     elif not needs_llm:
         if verbose:
             print(f"{Fore.GREEN}Rule '{rule.name}' only uses keyword/semantic matching. Skipping LLM evaluator creation.")
