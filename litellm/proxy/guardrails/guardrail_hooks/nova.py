@@ -160,6 +160,7 @@ def extract_rules(content: str) -> List[str]:
         
         rule_blocks.append(rule_text)
     
+    verbose_proxy_logger.debug(f"Loaded : {len(rule_blocks)} rules")
     return rule_blocks
 
 
@@ -260,8 +261,7 @@ def process_prompt(rule_text: str, prompt: str, verbose: bool = False,
         rule = parser.parse(rule_text)
     except Exception as e:
         verbose_proxy_logger.error(f"Error parsing rule: {e}")
-        pass
-        return None
+        raise Exception("Error parsing rule")
     
     # Check if this rule needs LLM evaluation
     needs_llm = check_if_rule_needs_llm(rule)
@@ -320,23 +320,20 @@ def process_prompt(rule_text: str, prompt: str, verbose: bool = False,
 class NovaGuardrail(CustomGuardrail):
     def __init__(
         self,
-        rule,
-        single=False,
-
+        rule:str,
+        single:bool=False,
+        llm:Optional[str]="openai",
+        model:Optional[str]="gpt-turbo-3.5",
+        verbose:Optional[bool]=True,
         **kwargs,
     ):
         """
         rule: Path to the Nova rule file
         single: Check only the first rule
         """
-
-        self.validate_environment()
-
-        # store kwargs as optional_params
-        self.optional_params = kwargs
-        # rule path t a file containing 
         super().__init__(**kwargs)
 
+        self.validate_environment()
         # Load the rule file
         file_content = load_rule_file(rule)
 
@@ -346,11 +343,8 @@ class NovaGuardrail(CustomGuardrail):
             rule_blocks = extract_rules(file_content)
             
             if not rule_blocks:
-                verbose_proxy_logger.debug(f"{Fore.RED}No valid rules found in {rule}")
-                #TODO: shall EXIT
-                self.fail = True
-                
-            verbose_proxy_logger.debug(f"\n{Fore.CYAN}Found {Fore.WHITE}{len(rule_blocks)}{Fore.CYAN} rules in {Fore.WHITE}{rule}")
+                verbose_proxy_logger.debug(f"No valid rules found in {rule}")
+                raise Exception("No valid rules found")
 
             # Parse all rules first
             parser = NovaParser()
@@ -360,110 +354,35 @@ class NovaGuardrail(CustomGuardrail):
                     rule = parser.parse(rule_text)
                     parsed_rules.append(rule)
                 except Exception as e:
-                    verbose_proxy_logger.debug(f"{Fore.RED}Error parsing rule #{rule_idx+1}: {e}")
+                    verbose_proxy_logger.debug(f"Error parsing rule #{rule_idx+1}: {e}")
             
             if not parsed_rules:
-                verbose_proxy_logger.debug(f"{Fore.RED}Failed to parse any rules. Exiting.")
-                #TODO: shall EXIT
-                self.fail = True
+                verbose_proxy_logger.debug(f"Failed to parse any rules. Exiting.")
+                raise Exception("Failed to load rules")
+            else:
+                verbose_proxy_logger.debug(f"Parsed all rules")
+        else:
+            # Parse the rule once for validation
+            try:
+                parser = NovaParser()
+                single_rule = parser.parse(file_content)
+            except Exception as e:
+                verbose_proxy_logger.error(f"Error parsing rule: {e}")
+                raise Exception("Failed to load rule")
 
+            # Create LLM evaluator if needed for this rule
+            needs_llm = check_if_rule_needs_llm(single_rule)
+            llm_evaluator = None
 
-    @log_guardrail_information
-    async def async_pre_call_hook(
-        self,
-        user_api_key_dict: UserAPIKeyAuth,
-        cache: DualCache,
-        data: dict,
-        call_type: Literal[
-            "completion",
-            "text_completion",
-            "embeddings",
-            "image_generation",
-            "moderation",
-            "audio_transcription",
-            "pass_through_endpoint",
-            "rerank",
-        ],
-    ) -> Optional[Union[Exception, str, dict]]:
-        """
-        Runs before the LLM API call
-        Runs on only Input
-        Use this if you want to MODIFY the input
-        """
-
-        # In this guardrail, if a user inputs `litellm` we will mask it and then send it to the LLM
-        _messages = data.get("messages")
-        if _messages:
-            for message in _messages:
-                _content = message.get("content")
-                if isinstance(_content, str):
-                    if "litellm" in _content.lower():
-                        _content = _content.replace("litellm", "********")
-                        message["content"] = _content
-
-        verbose_proxy_logger.debug(
-            "async_pre_call_hook: Message after masking %s", _messages
-        )
-
-        return data
-
-    @log_guardrail_information
-    async def async_moderation_hook(
-        self,
-        data: dict,
-        user_api_key_dict: UserAPIKeyAuth,
-        call_type: Literal[
-            "completion",
-            "embeddings",
-            "image_generation",
-            "moderation",
-            "audio_transcription",
-            "responses",
-        ],
-    ):
-        """
-        Runs in parallel to LLM API call
-        Runs on only Input
-
-        This can NOT modify the input, only used to reject or accept a call before going to LLM API
-        """
-
-        # this works the same as async_pre_call_hook, but just runs in parallel as the LLM API Call
-        # In this guardrail, if a user inputs `litellm` we will mask it.
-        _messages = data.get("messages")
-        if _messages:
-            for message in _messages:
-                _content = message.get("content")
-                if isinstance(_content, str):
-                    if "litellm" in _content.lower():
-                        raise ValueError("Guardrail failed words - `litellm` detected")
-
-    @log_guardrail_information
-    async def async_post_call_success_hook(
-        self,
-        data: dict,
-        user_api_key_dict: UserAPIKeyAuth,
-        response,
-    ):
-        """
-        Runs on response from LLM API call
-
-        It can be used to reject a response
-
-        If a response contains the word "coffee" -> we will raise an exception
-        """
-        verbose_proxy_logger.debug("async_pre_call_hook response: %s", response)
-        if isinstance(response, litellm.ModelResponse):
-            for choice in response.choices:
-                if isinstance(choice, litellm.Choices):
-                    verbose_proxy_logger.debug("async_pre_call_hook choice: %s", choice)
-                    if (
-                        choice.message.content
-                        and isinstance(choice.message.content, str)
-                        and "coffee" in choice.message.content
-                    ):
-                        raise ValueError("Guardrail failed Coffee Detected")
-
+            if needs_llm:
+                if verbose: verbose_proxy_logger.debug(f"Creating LLM evaluator for rule '{single_rule.name}'...")
+                llm_evaluator = get_validated_evaluator(llm, model, verbose)
+                if llm_evaluator is None:
+                    verbose_proxy_logger.error(f"Error: Failed to create LLM evaluator but rule requires it.")
+                    raise Exception("Failed LLM evalutor")
+            elif verbose:
+                    verbose_proxy_logger.debug(f"Rule '{single_rule.name}' doesn't require LLM evaluation. Skipping LLM evaluator creation.")
+        
 
     def validate_environment(
         self,

@@ -118,9 +118,12 @@ def initialize_nova(litellm_params, guardrail):
     from litellm.proxy.guardrails.guardrail_hooks.nova import NovaGuardrail
 
     _nova_callback = NovaGuardrail(
-        rule=litellm_params.get("rule"),
-        single=litellm_params.get("single", False),
-        guardrail_name=SupportedGuardrailIntegrations.GURDRAILS_AI.value,
+        rule=guardrail["litellm_params"].get("rule"),
+        single=guardrail["litellm_params"].get("single", False),
+        llm=guardrail["litellm_params"].get("llm", "openai"),
+        model=guardrail["litellm_params"].get("model", "gpt-turbo-3.5"),
+        verbose=guardrail["litellm_params"].get("verbose",False),
+        guardrail_name=guardrail["guardrail_name"],
         default_on=litellm_params["default_on"],
     )
     litellm.logging_callback_manager.add_litellm_callback(_nova_callback)
