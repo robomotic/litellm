@@ -26,6 +26,7 @@ class SupportedGuardrailIntegrations(Enum):
     PRESIDIO = "presidio"
     HIDE_SECRETS = "hide-secrets"
     AIM = "aim"
+    NOVA = "nova"
 
 
 class Role(Enum):

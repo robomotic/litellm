@@ -7,7 +7,16 @@ Version: 1.0.0
 Description: Command-line tool for running Nova rules against prompts for LiteLLM
 
 """
-from typing import Literal, Optional, Union
+import os
+import re
+import sys
+
+sys.path.insert(
+    0, os.path.abspath("../..")
+)  # Adds the parent directory to the system path
+
+import argparse
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import litellm
 from litellm._logging import verbose_proxy_logger
@@ -17,6 +26,7 @@ from litellm.integrations.custom_guardrail import (
     log_guardrail_information,
 )
 from litellm.proxy._types import UserAPIKeyAuth
+from litellm import get_secret
 
 # Nova dependencies
 # Filter out the specific FutureWarning about clean_up_tokenization_spaces
@@ -35,17 +45,12 @@ try:
 except ImportError:
     pass
 
-import os
-import sys
-import argparse
-import re
-import requests
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
-import colorama
-from colorama import Fore, Style, Back
+
+
+litellm.set_verbose = True
 
 GUARDRAIL_NAME = "nova"
+
 
 # Import Nova components
 try:
@@ -79,6 +84,7 @@ def load_rule_file(file_path: str) -> Optional[str]:
         FileNotFoundError: If the rule file doesn't exist
     """
     try:
+        verbose_proxy_logger.info(f"Loading file: {file_path}")
         with open(file_path, 'r') as f:
             return f.read()
     except FileNotFoundError:
@@ -323,6 +329,9 @@ class NovaGuardrail(CustomGuardrail):
         rule: Path to the Nova rule file
         single: Check only the first rule
         """
+
+        self.validate_environment()
+
         # store kwargs as optional_params
         self.optional_params = kwargs
         # rule path t a file containing 
@@ -454,3 +463,18 @@ class NovaGuardrail(CustomGuardrail):
                         and "coffee" in choice.message.content
                     ):
                         raise ValueError("Guardrail failed Coffee Detected")
+
+
+    def validate_environment(
+        self,
+        nova_openai_api_key: Optional[str] = None
+    ):
+        self.nova_openai_api_key: Optional[
+            str
+        ] = nova_openai_api_key or get_secret(
+            "NOVA_OPENAI_API_KEY", None
+        )  # type: ignore
+
+
+        if self.nova_openai_api_key is None:
+            verbose_proxy_logger.debug("Missing `NOVA_OPENAI_API_KEY` from environment")

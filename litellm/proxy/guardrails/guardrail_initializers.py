@@ -112,3 +112,15 @@ def initialize_guardrails_ai(litellm_params, guardrail):
         default_on=litellm_params["default_on"],
     )
     litellm.logging_callback_manager.add_litellm_callback(_guardrails_ai_callback)
+
+
+def initialize_nova(litellm_params, guardrail):
+    from litellm.proxy.guardrails.guardrail_hooks.nova import NovaGuardrail
+
+    _nova_callback = NovaGuardrail(
+        rule=litellm_params.get("rule"),
+        single=litellm_params.get("single", False),
+        guardrail_name=SupportedGuardrailIntegrations.GURDRAILS_AI.value,
+        default_on=litellm_params["default_on"],
+    )
+    litellm.logging_callback_manager.add_litellm_callback(_nova_callback)
