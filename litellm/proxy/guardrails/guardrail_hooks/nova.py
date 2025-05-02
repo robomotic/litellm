@@ -275,7 +275,7 @@ def process_prompt(rule_text: str, prompt: str, verbose: bool = False,
             return None
     elif not needs_llm:
         if verbose:
-            print(f"{Fore.GREEN}Rule '{rule.name}' only uses keyword/semantic matching. Skipping LLM evaluator creation.")
+            print(f"Rule '{rule.name}' only uses keyword/semantic matching. Skipping LLM evaluator creation.")
     
     # Match the prompt against the rule
     matcher = NovaMatcher(rule, llm_evaluator=llm_evaluator)
@@ -338,12 +338,12 @@ class NovaGuardrail(CustomGuardrail):
 
         self.validate_environment()
         # Load the rule file
-        file_content = load_rule_file(rule)
+        self.file_content = load_rule_file(rule)
 
         # Check if the file might contain multiple rules
-        if not single and 'rule ' in file_content.lower() and file_content.count('rule ') > 1:
+        if not single and 'rule ' in self.file_content.lower() and self.file_content.count('rule ') > 1:
             # Extract all rules from the file
-            rule_blocks = extract_rules(file_content)
+            rule_blocks = extract_rules(self.file_content)
             
             if not rule_blocks:
                 verbose_proxy_logger.debug(f"No valid rules found in {rule}")
@@ -364,27 +364,43 @@ class NovaGuardrail(CustomGuardrail):
                 raise Exception("Failed to load rules")
             else:
                 verbose_proxy_logger.debug(f"Parsed all rules")
+
+            # Check if any rule needs LLM evaluation and create a single evaluator if needed
+            needs_llm = check_if_rules_need_llm(parsed_rules)
+            self.llm_evaluator = None
+
+            if needs_llm:
+                if verbose:
+                    verbose_proxy_logger.debug(f"Creating single LLM evaluator for all rules that need it...")
+                self.llm_evaluator = get_validated_evaluator(llm, model, verbose)
+                if self.llm_evaluator is None:
+                    verbose_proxy_logger.debug(f"Error: Failed to create LLM evaluator but at least one rule requires it.")
+                    raise Exception("Error: Failed to create LLM evaluator but at least one rule requires it.")
+            elif verbose:
+                verbose_proxy_logger.debug(f"No rules require LLM evaluation. Skipping LLM evaluator creation.")
+
         else:
             # Parse the rule once for validation
             try:
                 parser = NovaParser()
-                single_rule = parser.parse(file_content)
+                single_rule = parser.parse(self.file_content)
             except Exception as e:
                 verbose_proxy_logger.error(f"Error parsing rule: {e}")
                 raise Exception("Failed to load rule")
 
             # Create LLM evaluator if needed for this rule
             needs_llm = check_if_rule_needs_llm(single_rule)
-            llm_evaluator = None
+            self.llm_evaluator = None
 
             if needs_llm:
-                if verbose: verbose_proxy_logger.debug(f"Creating LLM evaluator for rule '{single_rule.name}'...")
-                llm_evaluator = get_validated_evaluator(llm, model, verbose)
-                if llm_evaluator is None:
-                    verbose_proxy_logger.error(f"Error: Failed to create LLM evaluator but rule requires it.")
-                    raise Exception("Failed LLM evalutor")
+                if verbose:
+                    verbose_proxy_logger.debug(f"Creating single LLM evaluator for all rules that need it...")
+                self.llm_evaluator = get_validated_evaluator(llm, model, verbose)
+                if self.llm_evaluator is None:
+                    verbose_proxy_logger.debug(f"Error: Failed to create LLM evaluator but at least one rule requires it.")
+                    raise Exception("Error: Failed to create LLM evaluator but at least one rule requires it.")
             elif verbose:
-                    verbose_proxy_logger.debug(f"Rule '{single_rule.name}' doesn't require LLM evaluation. Skipping LLM evaluator creation.")
+                verbose_proxy_logger.debug(f"No rules require LLM evaluation. Skipping LLM evaluator creation.")
         
     @log_guardrail_information
     async def async_pre_call_hook(
@@ -446,15 +462,15 @@ class NovaGuardrail(CustomGuardrail):
         This can NOT modify the input, only used to reject or accept a call before going to LLM API
         """
 
-        # this works the same as async_pre_call_hook, but just runs in parallel as the LLM API Call
-        # In this guardrail, if a user inputs `litellm` we will mask it.
         _messages = data.get("messages")
         if _messages:
             for message in _messages:
                 _content = message.get("content")
                 if isinstance(_content, str):
-                    if "litellm" in _content.lower():
-                        raise ValueError("Guardrail failed words - `litellm` detected")
+                    result = process_prompt(self.file_content, _content, self.verbose, self.llm, self.model, self.llm_evaluator)
+                    if result['matched']: 
+                        verbose_proxy_logger.warning(result)
+                        raise ValueError(f"Nova Guardrail match: {result['rule_name']}")
 
     @log_guardrail_information
     async def async_post_call_success_hook(
